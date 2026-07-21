@@ -13,7 +13,6 @@ type Hospital = {
 export default function AdminDashboard() {
   const [hospitals, setHospitals] = useState<Hospital[]>([])
   const [loading, setLoading] = useState(true)
-  const [id, setId] = useState('')
   const [name, setName] = useState('')
   const [floors, setFloors] = useState(1)
   const [submitting, setSubmitting] = useState(false)
@@ -36,6 +35,7 @@ export default function AdminDashboard() {
   async function handleAddHospital(e: React.FormEvent) {
     e.preventDefault()
     setSubmitting(true)
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
     const res = await fetch('/api/admin/hospitals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -45,7 +45,6 @@ export default function AdminDashboard() {
     if (res.ok) {
       const newHospital = await res.json()
       setHospitals([...hospitals, newHospital])
-      setId('')
       setName('')
       setFloors(1)
     }
@@ -99,18 +98,7 @@ export default function AdminDashboard() {
             <Plus className="mr-2" size={20} /> Add Hospital
           </h2>
           <form onSubmit={handleAddHospital} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm font-medium mb-1 block">ID (Slug)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. mercy-general"
-                  value={id}
-                  onChange={e => setId(e.target.value)}
-                  className="flex h-10 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                  required
-                />
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium mb-1 block">Name</label>
                 <input

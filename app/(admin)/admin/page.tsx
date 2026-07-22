@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Building2, Plus, ArrowRight } from 'lucide-react'
+import { Building2, Plus, ArrowRight, QrCode } from 'lucide-react'
 
 type Hospital = {
   id: string
@@ -67,12 +67,14 @@ export default function AdminDashboard() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {hospitals.map(h => (
-              <Link 
-                key={h.id} 
-                href={`/admin/${h.id}/1`}
+              <div 
+                key={h.id}
                 className="group p-6 rounded-2xl border border-border bg-black/40 hover:bg-black/80 transition-all flex items-center justify-between"
               >
-                <div className="flex items-center space-x-4">
+                <Link 
+                  href={`/admin/${h.id}/1`}
+                  className="flex-1 flex items-center space-x-4"
+                >
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
                     <Building2 size={24} />
                   </div>
@@ -80,9 +82,24 @@ export default function AdminDashboard() {
                     <h2 className="font-medium text-lg group-hover:text-primary transition-colors">{h.name}</h2>
                     <p className="text-sm text-muted-foreground">{h.floors} floor{h.floors !== 1 ? 's' : ''}</p>
                   </div>
+                </Link>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/admin/${h.id}/qr`}
+                    onClick={e => e.stopPropagation()}
+                    className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+                    title="QR Codes"
+                  >
+                    <QrCode size={20} />
+                  </Link>
+                  <Link 
+                    href={`/admin/${h.id}/1`}
+                    className="text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all"
+                  >
+                    <ArrowRight />
+                  </Link>
                 </div>
-                <ArrowRight className="text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
-              </Link>
+              </div>
             ))}
             
             {hospitals.length === 0 && (

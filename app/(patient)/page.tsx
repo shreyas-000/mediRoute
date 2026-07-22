@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Profile } from '@/types'
 import { createClient } from '@/lib/supabase/client'
-import { MapPin, Accessibility, Navigation, Building2, ArrowLeft } from 'lucide-react'
+import { MapPin, Accessibility, Navigation, Building2, ArrowLeft, QrCode } from 'lucide-react'
 
 type Hospital = {
   id: string
@@ -131,29 +131,36 @@ export default function EntryPage() {
             <h1 className="text-3xl font-bold tracking-tight mb-1">{selectedHospital.name}</h1>
             <p className="text-muted-foreground mb-8">Where do you need to go today?</p>
 
-            {/* Profile toggle */}
-            <div className="flex gap-3 mb-8 bg-black/20 p-1.5 rounded-full border border-border">
-              {(['standard', 'wheelchair'] as Profile[]).map(p => {
-                const isActive = profile === p
-                return (
-                  <button
-                    key={p}
-                    onClick={() => setProfile(p)}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-full text-sm font-medium transition-all ${
-                      isActive
-                        ? 'bg-primary text-primary-foreground shadow-lg'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    {p === 'standard' ? <Navigation size={16} /> : <Accessibility size={16} />}
-                    {p === 'standard' ? 'Standard' : 'Accessible'}
-                  </button>
-                )
-              })}
-            </div>
+             <div className="flex flex-col gap-3 mb-8 bg-black/20 p-1.5 rounded-full border border-border">
+               {(['standard', 'wheelchair'] as Profile[]).map(p => {
+                 const isActive = profile === p
+                 return (
+                   <button
+                     key={p}
+                     onClick={() => setProfile(p)}
+                     className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-full text-sm font-medium transition-all ${
+                       isActive
+                         ? 'bg-primary text-primary-foreground shadow-lg'
+                         : 'text-muted-foreground hover:text-foreground'
+                     }`}
+                   >
+                     {p === 'standard' ? <Navigation size={16} /> : <Accessibility size={16} />}
+                     {p === 'standard' ? 'Standard' : 'Accessible'}
+                   </button>
+                 )
+               })}
+             </div>
 
-            {/* Search bar */}
-            <div className="relative mb-6">
+             {/* Scan QR Button */}
+              <button
+                onClick={() => router.push(`/scan?profile=${profile}`)}
+                className="w-full mb-6 py-4 rounded-2xl border border-border bg-primary/10 text-primary hover:bg-primary/20 transition-all flex items-center justify-center gap-2 font-semibold"
+              >
+                <QrCode size={20} />
+                Scan QR Code
+              </button>
+             {/* Search bar */}
+             <div className="relative mb-6">
               <input
                 type="search"
                 placeholder="Search for departments, rooms..."

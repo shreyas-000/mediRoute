@@ -114,9 +114,11 @@ function NavigateContent() {
       renderer.setPixelRatio(window.devicePixelRatio)
       renderer.setSize(window.innerWidth, window.innerHeight)
       renderer.xr.enabled = true
+      renderer.xr.setReferenceSpaceType('local')
 
       const session = await navigator.xr.requestSession('immersive-ar', {
         requiredFeatures: ['dom-overlay'],
+        optionalFeatures: ['local'],
         domOverlay: { root: overlayRef.current },
       })
 
@@ -137,26 +139,34 @@ function NavigateContent() {
       const arrowsGroup = new THREE.Group()
       scene.add(arrowsGroup)
 
-      const arrows: THREE.Group[] = []
-      for (let i = 0; i < 3; i++) {
-        const arrow = new THREE.Group()
-        const material = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.3, metalness: 0.8 })
-        
-        const shaftGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.3, 16)
-        shaftGeo.rotateX(Math.PI / 2)
-        shaftGeo.translate(0, 0, 0.15)
-        const shaft = new THREE.Mesh(shaftGeo, material)
-        
-        const headGeo = new THREE.ConeGeometry(0.12, 0.25, 16)
-        headGeo.rotateX(Math.PI / 2)
-        headGeo.translate(0, 0, 0.3 + 0.125) 
-        const head = new THREE.Mesh(headGeo, material)
-        
-        arrow.add(shaft)
-        arrow.add(head)
-        arrowsGroup.add(arrow)
-        arrows.push(arrow)
-      }
+      // Create a single sleek glowing chevron, scaled down to fit the screen
+      const shape = new THREE.Shape()
+      shape.moveTo(0, 0.15)
+      shape.lineTo(0.15, -0.15)
+      shape.lineTo(0, -0.05)
+      shape.lineTo(-0.15, -0.15)
+      shape.lineTo(0, 0.15)
+
+      const extrudeSettings = { depth: 0.02, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.01, bevelThickness: 0.01 }
+      const arrowGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings)
+      
+      // Rotate so it lays flat on the floor, pointing towards -Z
+      arrowGeo.rotateX(-Math.PI / 2)
+
+      const arrowMat = new THREE.MeshPhysicalMaterial({
+        color: 0x22c55e,
+        metalness: 0.3,
+        roughness: 0.2,
+        transmission: 0.5,
+        thickness: 0.1,
+        transparent: true,
+        opacity: 0.9,
+        emissive: 0x22c55e,
+        emissiveIntensity: 0.8,
+      })
+
+      const arrowMesh = new THREE.Mesh(arrowGeo, arrowMat)
+      arrowsGroup.add(arrowMesh)
 
       let calibrated = false
 
@@ -168,9 +178,20 @@ function NavigateContent() {
         
         const pose = xrFrame.getViewerPose(refSpace)
         if (!pose) return
-
+        
         if (!calibrated) {
-          xrTrackerRef.current.recalibrate({ x: startX, y: startY, floor: startFloor }, pose)
+          let mapAngle = -Math.PI / 2 // Default: facing North (-Y)
+          
+          // If we have a route, we assume the user is starting the session facing the first destination node.
+          // This allows us to mathematically align the XR coordinate system with the 2D floor plan!
+          if (route && route.length > 0 && graph) {
+            const firstNode = graph.nodes[route[0].toNode]
+            if (firstNode) {
+              mapAngle = Math.atan2(firstNode.y - startY, firstNode.x - startX)
+            }
+          }
+          
+          xrTrackerRef.current.recalibrate({ x: startX, y: startY, floor: startFloor }, pose, mapAngle)
           calibrated = true
         }
 
@@ -188,42 +209,43 @@ function NavigateContent() {
         if (nextN && !currentEdge?.isElevator && !currentEdge?.isStairs) {
           arrowsGroup.visible = true
           
-          const targetBearing = bearing(worldPos.x, worldPos.y, nextN.x, nextN.y)
-          const deviceBearingFromRight = deviceHeading - 90 
-          let angleDiff = targetBearing - deviceBearingFromRight
-          
-          while (angleDiff <= -180) angleDiff += 360
-          while (angleDiff > 180) angleDiff -= 360
-          
-          const isCorrectDir = Math.abs(angleDiff) < 45
-          const colorHex = isCorrectDir ? 0x22c55e : 0xef4444 // green-500 : red-500
-          
           const xrCamera = renderer.xr.getCamera()
           const camPos = new THREE.Vector3()
           const camQuat = new THREE.Quaternion()
           const camScale = new THREE.Vector3()
           xrCamera.matrixWorld.decompose(camPos, camQuat, camScale)
           
+          // Current camera forward direction
           const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat)
           forward.y = 0
-          forward.normalize()
+          if (forward.lengthSq() > 0.001) forward.normalize()
+          else forward.set(0, 0, -1)
 
-          const angleRad = -angleDiff * (Math.PI / 180)
-          const targetDir = forward.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angleRad)
+          // Vector pointing directly to the target node in XR space
+          // We keep this vector for the color logic since it perfectly solved the color issue.
+          const targetVec = new THREE.Vector3(worldPos.x - nextN.x, 0, worldPos.y - nextN.y)
+          if (targetVec.lengthSq() > 0.001) targetVec.normalize()
+          else targetVec.set(0, 0, -1)
+          
+          // Angle difference between where we are looking and the target
+          const angleRad = forward.angleTo(targetVec)
+          
+          const isCorrectDir = angleRad < (45 * Math.PI / 180)
+          
+          // Un-swapped colors: Green ONLY when facing the exact correct direction, Red otherwise.
+          const colorHex = isCorrectDir ? 0x22c55e : 0xef4444 // Green if true, Red if false
+          
+          // Position the single sleek arrow 1.2m in front of the camera, slightly lower
+          arrowMesh.position.copy(camPos).add(forward.clone().multiplyScalar(1.2))
+          arrowMesh.position.y -= 0.5
+          
+          arrowMat.color.setHex(colorHex)
+          arrowMat.emissive.setHex(colorHex)
+          
+          // Point the arrow exactly opposite to targetVec to fix the visual direction 
+          // (making it point West as requested) without breaking the color logic.
+          arrowMesh.lookAt(arrowMesh.position.clone().sub(targetVec))
 
-          arrows.forEach((arrow, i) => {
-            const distance = 1.0 + i * 0.8
-            arrow.position.copy(camPos).add(forward.clone().multiplyScalar(distance))
-            arrow.position.y -= 0.6 
-            
-            arrow.children.forEach(child => {
-               if ((child as THREE.Mesh).material instanceof THREE.MeshStandardMaterial) {
-                 ((child as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setHex(colorHex)
-               }
-            })
-            
-            arrow.lookAt(arrow.position.clone().sub(targetDir))
-          })
         } else {
           arrowsGroup.visible = false
         }
@@ -232,7 +254,7 @@ function NavigateContent() {
       })
     } catch (err) {
       console.error('Failed to start AR session:', err)
-      alert('Failed to start AR session. Please make sure you are using Chrome on an ARCore-supported Android device.')
+      alert(`Failed to start AR session: ${err instanceof Error ? err.message : String(err)}\nPlease make sure you are using Chrome on an ARCore-supported Android device.`)
     }
   }
 
@@ -308,75 +330,76 @@ function NavigateContent() {
       <div 
         ref={overlayRef} 
         className="fixed inset-0 pointer-events-none"
-        style={{ display: arSessionActive ? 'block' : 'none' }}
       >
-        {/* Top HUD */}
-        <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent pt-12 pb-8 px-6 flex items-start justify-between pointer-events-none">
-          <div>
-            <p className="text-sm text-white/70 font-medium">Navigating to</p>
-            <p className="font-bold text-xl text-white tracking-tight">{destNode?.label}</p>
-          </div>
-          <div className="text-right bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10">
-            <p className="text-xs text-white/70 font-medium">Floor {currentFloor}</p>
-            <p className="font-bold text-lg text-white">{Math.round(remainingDistM)}m</p>
-          </div>
-        </div>
-
-        {/* Directional Arrow Removed - Replaced with 3D Arrow */}
-
-        {/* Landmarks / Voice Cues */}
-        {currentEdge?.landmark && !arrived && !currentEdge?.isElevator && (
-          <div className="absolute bottom-12 left-6 right-6">
-            <div className="bg-black/80 backdrop-blur-xl text-white rounded-2xl px-6 py-5 border border-white/10 shadow-2xl">
-              <p className="text-sm text-white/70 font-medium mb-1">Next instruction</p>
-              <p className="font-semibold text-lg">{currentEdge.landmark}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Elevator / Stairs transition */}
-        {(currentEdge?.isElevator || currentEdge?.isStairs) && !arrived && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-auto">
-            <div className="bg-background rounded-3xl p-8 mx-6 text-center border border-border max-w-sm w-full animate-in zoom-in-95 duration-300">
-              <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                <p className="text-4xl">{currentEdge.isElevator ? '🛗' : '🪜'}</p>
+        {arSessionActive && (
+          <>
+            {/* Top HUD */}
+            <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent pt-12 pb-8 px-6 flex items-start justify-between pointer-events-none">
+              <div>
+                <p className="text-sm text-white/70 font-medium">Navigating to</p>
+                <p className="font-bold text-xl text-white tracking-tight">{destNode?.label}</p>
               </div>
-              <p className="font-bold text-2xl mb-1">Take the {currentEdge.isElevator ? 'elevator' : 'stairs'}</p>
-              <p className="text-muted-foreground mb-8">Go to Floor {nextNode?.floor}</p>
-              <button
-                onClick={confirmFloorTransition}
-                className="w-full bg-primary text-primary-foreground font-semibold py-4 rounded-xl shadow-lg active:scale-95 transition-transform"
-              >
-                I'm on Floor {nextNode?.floor}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Arrival Screen */}
-        {arrived && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-auto">
-            <div className="bg-background rounded-3xl p-8 mx-6 text-center border border-border max-w-sm w-full animate-in zoom-in-95 duration-300">
-              <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-4 text-green-500">
-                <svg viewBox="0 0 24 24" className="w-10 h-10 fill-current"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>
+              <div className="text-right bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10">
+                <p className="text-xs text-white/70 font-medium">Floor {currentFloor}</p>
+                <p className="font-bold text-lg text-white">{Math.round(remainingDistM)}m</p>
               </div>
-              <p className="font-bold text-2xl mb-2">You have arrived</p>
-              <p className="text-muted-foreground mb-8">You are now at {destNode?.label}.</p>
-              <button
-                onClick={() => window.location.href = '/'}
-                className="w-full bg-secondary text-secondary-foreground font-semibold py-4 rounded-xl active:scale-95 transition-transform"
-              >
-                Done
-              </button>
             </div>
-          </div>
-        )}
 
-        {/* Wheelchair Accessible Badge */}
-        {profile === 'wheelchair' && (
-          <div className="absolute top-24 left-6 bg-blue-500/20 text-blue-400 border border-blue-500/30 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
-            ♿ Accessible Route
-          </div>
+            {/* Landmarks / Voice Cues */}
+            {currentEdge?.landmark && !arrived && !currentEdge?.isElevator && (
+              <div className="absolute bottom-12 left-6 right-6">
+                <div className="bg-black/80 backdrop-blur-xl text-white rounded-2xl px-6 py-5 border border-white/10 shadow-2xl">
+                  <p className="text-sm text-white/70 font-medium mb-1">Next instruction</p>
+                  <p className="font-semibold text-lg">{currentEdge.landmark}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Elevator / Stairs transition */}
+            {(currentEdge?.isElevator || currentEdge?.isStairs) && !arrived && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-auto">
+                <div className="bg-background rounded-3xl p-8 mx-6 text-center border border-border max-w-sm w-full animate-in zoom-in-95 duration-300">
+                  <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <p className="text-4xl">{currentEdge.isElevator ? '🛗' : '🪜'}</p>
+                  </div>
+                  <p className="font-bold text-2xl mb-1">Take the {currentEdge.isElevator ? 'elevator' : 'stairs'}</p>
+                  <p className="text-muted-foreground mb-8">Go to Floor {nextNode?.floor}</p>
+                  <button
+                    onClick={confirmFloorTransition}
+                    className="w-full bg-primary text-primary-foreground font-semibold py-4 rounded-xl shadow-lg active:scale-95 transition-transform"
+                  >
+                    I'm on Floor {nextNode?.floor}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Arrival Screen */}
+            {arrived && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-auto">
+                <div className="bg-background rounded-3xl p-8 mx-6 text-center border border-border max-w-sm w-full animate-in zoom-in-95 duration-300">
+                  <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-4 text-green-500">
+                    <svg viewBox="0 0 24 24" className="w-10 h-10 fill-current"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>
+                  </div>
+                  <p className="font-bold text-2xl mb-2">You have arrived</p>
+                  <p className="text-muted-foreground mb-8">You are now at {destNode?.label}.</p>
+                  <button
+                    onClick={() => window.location.href = '/'}
+                    className="w-full bg-secondary text-secondary-foreground font-semibold py-4 rounded-xl active:scale-95 transition-transform"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Wheelchair Accessible Badge */}
+            {profile === 'wheelchair' && (
+              <div className="absolute top-24 left-6 bg-blue-500/20 text-blue-400 border border-blue-500/30 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
+                ♿ Accessible Route
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -6,7 +6,7 @@ export type XRPosition = {
 
 export type XRTracker = {
   // Call when a QR anchor establishes absolute position
-  recalibrate: (worldPos: XRPosition, currentPose: XRViewerPose) => void
+  recalibrate: (worldPos: XRPosition, currentPose: XRViewerPose, mapAngleRad?: number) => void
   // Call every XR frame — returns current estimated world position
   getWorldPosition: (currentPose: XRViewerPose) => XRPosition
   // Heading in degrees (0 = +X axis of floor plan)
@@ -17,6 +17,7 @@ export function createXRTracker(): XRTracker {
   let worldOrigin: XRPosition = { x: 0, y: 0, floor: 1 }
   // XR position at the time of last calibration
   let poseOrigin: { x: number; y: number; z: number } | null = null
+  let trackingTheta = 0 // rotation to align XR space with Map space
 
   function getPoseTranslation(pose: XRViewerPose) {
     const m = pose.transform.matrix
@@ -24,22 +25,27 @@ export function createXRTracker(): XRTracker {
   }
 
   return {
-    recalibrate(worldPos, currentPose) {
+    recalibrate(worldPos, currentPose, mapAngleRad = -Math.PI / 2) {
       worldOrigin = worldPos
       poseOrigin = getPoseTranslation(currentPose)
+      // XR -Z (forward) has an angle of -PI/2. We rotate XR coordinates to match the map angle.
+      trackingTheta = mapAngleRad + Math.PI / 2
     },
 
     getWorldPosition(currentPose) {
       if (!poseOrigin) return worldOrigin
       const p = getPoseTranslation(currentPose)
-      // XR space: X = right, Z = forward (into screen/ahead of camera), Y = up
-      // Floor plan space: X = right, Y = down the corridor
-      // Map XR delta-X → floor plan delta-X, XR delta-Z → floor plan delta-Y
-      const dx = p.x - poseOrigin.x
-      const dy = p.z - poseOrigin.z   // forward movement in XR = Y in our 2D plan
+      
+      const dx_xr = p.x - poseOrigin.x
+      const dz_xr = p.z - poseOrigin.z   
+      
+      // Rotate the XR movement vector to align with the 2D floor plan
+      const mapDx = dx_xr * Math.cos(trackingTheta) - dz_xr * Math.sin(trackingTheta)
+      const mapDy = dx_xr * Math.sin(trackingTheta) + dz_xr * Math.cos(trackingTheta)
+      
       return {
-        x: worldOrigin.x + dx,
-        y: worldOrigin.y + dy,
+        x: worldOrigin.x + mapDx,
+        y: worldOrigin.y + mapDy,
         floor: worldOrigin.floor,
       }
     },
